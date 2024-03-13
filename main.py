@@ -8,6 +8,17 @@ class ForensicExtractor:
         self.disk_image_path = disk_image_path
         self.output_directory = output_directory
         self.yaml_config_path = "files_to_extract.yaml"  # Define the path to your YAML config file
+        self.patters = {
+            "partition" :  r"006:\s+\d+\s+(\d+)\s+\d+\s+\d+\s+Basic data partition",
+            "windows_inode" : r"d\/d (\d+-\d+-\d+):.*Windows*",
+            "system32_inode" : r"d\/d (\d+-\d+-\d+):.*System32*",
+            "config_inode" : r"d\/d (\d+-\d+-\d+):.*config*",
+            "system_inode" : r"r\/r (\d+-\d+-\d+):.*SYSTEM\n",
+            "security_inode" : r"r\/r (\d+-\d+-\d+):.*SECURITY\n",
+            "software_inode" : r"r\/r (\d+-\d+-\d+):.*SOFTWARE\n",
+            "sam_inode" : r"r\/r (\d+-\d+-\d+):.*SAM\n",
+        }
+
 
 
     def extract_file(self):
@@ -40,8 +51,16 @@ class ForensicExtractor:
         partition_files = self.run_command(command)
         return partition_files
 
+    def extract_files_of_interest(self, partition_number, files_to_extract):
+        return 0
+
+    def extract_forensic_data(self, files_to_extract):
+        for file_pattern in files_to_extract:
+            # Use Eric Zimmerman or RegRipper tools to extract data
+            # Implement your logic here
+
     def main(self):
-        partitions_info = self.list_partitions()
+        partitions_info = self.list_partitions()    
         # Choose the right partition based on your logic
         chosen_partition = 1
         partition_files = self.list_partition_files(chosen_partition)
