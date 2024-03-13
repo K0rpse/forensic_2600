@@ -40,14 +40,6 @@ class ForensicExtractor:
         partition_files = self.run_command(command)
         return partition_files
 
-    def extract_files_of_interest(self, partition_number, files_to_extract):
-        return 0
-
-    def extract_forensic_data(self, files_to_extract):
-        for file_pattern in files_to_extract:
-            # Use Eric Zimmerman or RegRipper tools to extract data
-            # Implement your logic here
-
     def main(self):
         partitions_info = self.list_partitions()
         # Choose the right partition based on your logic
