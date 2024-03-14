@@ -191,4 +191,3 @@ if __name__ == "__main__":
     output_directory = ""
     forensic_extractor = ForensicExtractor(disk_image_path, output_directory)
     forensic_extractor.main()
-
