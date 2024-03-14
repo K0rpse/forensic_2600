@@ -121,7 +121,7 @@ class ForensicExtractor:
         assert fmt in ["dict", "string"]
         command = f"mmls {self.disk_image_path}".split(' ')
         partitions_info = self.run_command(command)
-        if fmt == "dict":
+        if fmt == "dict" and partitions_info is not None:
             parts = []
             for line in partitions_info.split('\n'):
                 """
@@ -146,9 +146,10 @@ class ForensicExtractor:
         return partitions_info
 
     def list_partition_files(self, partition_number):
-        command = f"fls {self.disk_image_path} -r -p {partition_number}".split(' ')
+        command = f"fls {self.disk_image_path} -r -l -p {partition_number}".split(' ')
         output = self.run_command(command)
         if "Cannot determine file system type" in self.current_stderr:
+            print(colored("Trying using offset", "blue"))
             # Offset must be calculated when this error occurs
             parts = self.list_partitions(fmt="dict")
             start_offset = None
@@ -158,7 +159,7 @@ class ForensicExtractor:
             if start_offset is None:
                 print(colored("Alternative partition offset cannot be found by Extractor", "red"))
                 return output
-            command = f"fls {self.disk_image_path} -r -o {start_offset}".split(' ')
+            command = f"fls {self.disk_image_path} -r -p -o {start_offset}".split(' ')
             output = self.run_command(command)
         return output
 
