@@ -95,8 +95,19 @@ class ForensicExtractor:
         os.system(f"icat -o {partition_offset} {disk_image_path} {software_inode} > output/SOFTWARE")
         os.system(f"icat -o {partition_offset} {disk_image_path} {sam_inode} > output/SAM")
 
-    def extract_file(self):
-        return 0
+    def extract_file(self, partition_number, file_path, output_fd=None):
+        parts = self.list_partitions(fmt="dict")
+        start_offset = None
+        for part in parts:
+            if part["id"] == partition_number:
+                start_offset = part["start"]
+        if start_offset is None:
+            raise ValueError(colored(f"Partition number {partition_number} offset cannot be count", "red"))
+
+        command = f"fcat -o {start_offset} {file_path} {self.disk_image_path}"
+        command = command.split(' ')
+        output = self.run_command(command, stdout=output_fd, text=not bool(output_fd))
+        return output
 
     def extract_browser_info(self):
         return 0
@@ -107,15 +118,18 @@ class ForensicExtractor:
     def extract_mft(self):
         return 0
 
-    def run_command(self, command):
+    def run_command(self, command, stdout=subprocess.PIPE, text=True) -> str | bool | None:
         self.current_stderr = ""
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = subprocess.run(command, stdout=stdout, stderr=subprocess.PIPE, text=text)
         if result.returncode != 0:
             print(f"Error executing command: {command}")
             print(result.stderr)
             self.current_stderr = result.stderr
             return None
-        return result.stdout
+        if stdout == subprocess.PIPE:
+            return result.stdout
+        else:
+            return result.returncode == 0
 
     def list_partitions(self, fmt="string"):
         assert fmt in ["dict", "string"]
