@@ -20,7 +20,13 @@ class Cli:
             },
             "select": {
                 "help": "Select partition",
-                "args": ["partition"]
+                "function": self.select_partition,
+                "args": ["selected_partition_number"]
+            },
+            "unselect": {
+                "help": "Unselect partition",
+                "function": self.unselect_partition,
+                "args": []
             },
             "lspart": {
                 "help": "List partitions",
@@ -34,12 +40,34 @@ class Cli:
             }
         }
 
+        self.selected_partition = None
+
         c = {}
         for k in self.commands:
             c[k] = None
         self.word_completer = NestedCompleter.from_nested_dict(c)
         self.prompt_session = PromptSession(completer=self.word_completer)
         self.start()
+
+    def select_partition(self, new_partition_number):
+        self.selected_partition = new_partition_number
+
+    def unselected_partition(self):
+        self.selected_partition = None
+
+    def get_command_parser(self, command):
+        command = self.commands.get(command)
+        if command is None:
+            raise RuntimeError(f"Command '{command}' shouldn't be arrived to this function")
+        local_parser = argparse.ArgumentParser()
+        for arg in command["args"]:
+            if arg == "partition_number":
+                if self.selected_partition:
+                    local_parser.add_argument("partition_number", type=int, required=False)
+                else:
+                    local_parser.add_argument("partition_number", type=int, required=True)
+        return local_parser
+
 
     def help(self, command=None):
         for command_k in self.commands.keys():
@@ -79,11 +107,17 @@ class Cli:
             self.help(user_command)
             return
 
-        ret = self.commands[user_command]["function"](*user_args)
+        try:
+            parsed_args = self.get_command_parser(user_command).parse_args(user_args)
+        except argparse.ArgumentError as e:
+            print("ERROR")
+        print(parsed_args)
+
+        """ret = self.commands[user_command]["function"](*user_args)
 
         if ret is not None:
             print("===============")
-            print(ret)
+            print(ret)"""
 
 
 if __name__ == "__main__":
