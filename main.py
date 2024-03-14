@@ -4,7 +4,7 @@ import yaml
 from pathlib import Path
 
 class ForensicExtractor:
-    def __init__(self, disk_image_path, output_directory):
+    def __init__(self, disk_image_path, output_directory=None):
         self.disk_image_path = disk_image_path
         self.output_directory = output_directory
         self.yaml_config_path = "files_to_extract.yaml"  # Define the path to your YAML config file
@@ -56,6 +56,7 @@ class ForensicExtractor:
 
     def extract_forensic_data(self, files_to_extract):
         for file_pattern in files_to_extract:
+            pass
             # Use Eric Zimmerman or RegRipper tools to extract data
             # Implement your logic here
 
