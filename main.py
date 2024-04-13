@@ -10,11 +10,11 @@ class ForensicExtractor:
     def __init__(self, disk_image_path, output_directory=None):
         self.disk_image_path = disk_image_path
         self.output_directory = output_directory
+        self.data_partition_offset = ""
         self.yaml_config_path = "files_to_extract.yaml"  # Define the path to your YAML config file
         self.current_stderr = ""
         self.patterns = {
             "partition" :  r"006:\s+\d+\s+(\d+)\s+\d+\s+\d+\s+Basic data partition",
-            "partition" : {"offset" : 0, "pattern" : r"006:\s+\d+\s+(\d+)\s+\d+\s+\d+\s+Basic data partition"},
             "windows_inode" : r"d\/d (\d+-\d+-\d+):.*Windows*",
             "windows_inode" : {"inode" : 0, "pattern" : r"d\/d (\d+-\d+-\d+):.*Windows*"},
             "system32_inode" : r"d\/d (\d+-\d+-\d+):.*System32*",
@@ -28,26 +28,53 @@ class ForensicExtractor:
             "software_inode" : r"r\/r (\d+-\d+-\d+):.*SOFTWARE\n",
             "software_inode" : {"inode" : 0, "pattern" : r"r\/r (\d+-\d+-\d+):.*SOFTWARE\n"},
             "sam_inode" : r"r\/r (\d+-\d+-\d+):.*SAM\n",
-            "sam_inode" : {"inode" : 0, "pattern": r"r\/r (\d+-\d+-\d+):.*SAM\n"}
+            "sam_inode" : {"inode" : 0, "pattern": r"r\/r (\d+-\d+-\d+):.*SAM\n"},
+            'users_inode' : {"inode": 0, "pattern":  r"d\/d (\d+-\d+-\d+):.*Users*"},
+            'ntuser_data_inode' : r"r\/r (\d+-\d+-\d+):.*NTUSER.DAT*",
+            "random_inode" : r"d\/d (\d+-\d+-\d+):"
         }
+
 
     def execute_re(self, pattern, data):
         match = re.search(pattern, data)
         if match == None:
-            print("Fail match")
+            print(f"FAIL MATCH\n   [+] Data: {data}\n   [+] pattern: {pattern}")
             return None
         return match.group(1)
 
 
 
-    def get_offset_partition_data(self):
+    def init_offset_partition_data(self):
         output = self.run_command(f"mmls {self.disk_image_path}")
-        self.patterns["partition"]["offset"] = self.execute_re(self.patterns["partition"]["pattern"], output)
-        return self.patterns["partition"]["offset"]
+        self.data_partition_offset = self.execute_re(self.patterns["partition"], output)
+        print(self.data_partition_offset)
+
+    def get_offset_partition_data(self):
+        return self.data_partition_offset
 
     def get_windows_inode(self):
         windows_ = self.patterns["pattern"]
-        output = self.run_command(f"fls -o {self.patterns['partition']['offset']} {self.disk_image_path} {self.patterns['windows']['offset']}")
+        output = self.run_command(f"fls -o {self.patterns['partition']} {self.disk_image_path} {self.patterns['windows']['offset']}")
+
+    def get_user_hive(self):
+
+        ls_root = self.run_command(f"fls -o {self.data_partition_offset} {self.disk_image_path}")
+        #print(ls_root)
+        users_inode = self.execute_re(self.patterns['users_inode']['pattern'], ls_root)
+        ls_users = self.run_command(f"fls -o {self.data_partition_offset} {self.disk_image_path} {users_inode}").split("\n")
+        i=0
+        for user in ls_users:
+            if ("All Users" not in user) and ("Default User" not in user) and ("desktop.ini" not in user) and ("Public" not in user):
+                #print(user)
+                user_inode = self.execute_re(self.patterns['random_inode'], user)
+                if user_inode != None:
+                    #print(user_inode)
+                    ls_user = self.run_command(f"fls -o {self.data_partition_offset} {self.disk_image_path} {user_inode}")
+                    
+                    nt_user_data_inode = self.execute_re(self.patterns["ntuser_data_inode"], ls_user)
+                    
+                    os.system(f"icat -o {self.data_partition_offset} {disk_image_path} {nt_user_data_inode} > output/ntuser{str(i)}.dat")
+                    i+=1
 
     def extract_hive(self):
 
@@ -77,8 +104,6 @@ class ForensicExtractor:
 
         output_config = self.run_command(f"fls -o {partition_offset} {self.disk_image_path} {config_inode}")
 
-        #print(output_config)
-
         system_inode = self.execute_re(self.patterns["system_inode"]["pattern"], output_config)
 
         security_inode = self.execute_re(self.patterns["security_inode"]["pattern"], output_config)
@@ -89,11 +114,14 @@ class ForensicExtractor:
 
         print(f"system inode: {system_inode}\nsecurity inode: {security_inode}\nsoftware_inode: {software_inode}\nsam inode: {sam_inode}")
 
+        print(partition_offset, disk_image_path)
 
+        print(f"icat -o {partition_offset} {disk_image_path} {system_inode} > output/SYSTEM")
         os.system(f"icat -o {partition_offset} {disk_image_path} {system_inode} > output/SYSTEM")
         os.system(f"icat -o {partition_offset} {disk_image_path} {security_inode} > output/SECURITY")
         os.system(f"icat -o {partition_offset} {disk_image_path} {software_inode} > output/SOFTWARE")
         os.system(f"icat -o {partition_offset} {disk_image_path} {sam_inode} > output/SAM")
+        
 
     def extract_file(self, partition_number, file_path, output_fd=None):
         parts = self.list_partitions(fmt="dict")
@@ -135,6 +163,8 @@ class ForensicExtractor:
         assert fmt in ["dict", "string"]
         command = f"mmls {self.disk_image_path}".split(' ')
         partitions_info = self.run_command(command)
+
+
         if fmt == "dict" and partitions_info is not None:
             parts = []
             for line in partitions_info.split('\n'):
@@ -180,6 +210,7 @@ class ForensicExtractor:
     def extract_files_of_interest(self, partition_number, files_to_extract):
         return 0
 
+
     def extract_forensic_data(self, files_to_extract):
         for file_pattern in files_to_extract:
             return 0
@@ -187,11 +218,15 @@ class ForensicExtractor:
             # Implement your logic here
 
     def main(self):
+
+        """
+        
         partitions_info = self.list_partitions()
         # Choose the right partition based on your logic
         chosen_partition = 1
         partition_files = self.list_partition_files(chosen_partition)
 
+        
         with open(self.yaml_config_path, "r") as config_file:
             config_data = yaml.safe_load(config_file)
 
@@ -199,6 +234,11 @@ class ForensicExtractor:
         self.extract_files_of_interest(chosen_partition, files_to_extract)
 
         self.extract_forensic_data(files_to_extract)
+        """
+        self.init_offset_partition_data()
+        self.get_user_hive()
+
+        
 
 
 if __name__ == "__main__":
