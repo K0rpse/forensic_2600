@@ -17,7 +17,13 @@ class ForensicExtractor:
         self.disk_image_path = disk_image_path
         self.output_directory = output_directory
         Path.mkdir(Path(self.output_directory), exist_ok=True, parents=True)
-        self.data_partition_offset = ""
+        self.patterns = {
+            "partitionv1": r"006:\s+\d+\s+(\d+)\s+\d+\s+\d+\s+Basic data partition",
+            "partition": r"^[0-9]{1,3}: {2}[^ ]+ +([0-9]{10}) {3}[0-9]{10} {3}[0-9]{10} {3}(NTFS.*|Basic data partition)$",
+            'users_inode' : {"inode": 0, "pattern":  r"d\/d (\d+-\d+-\d+):.*Users*"},
+            'ntuser_data_inode' : r"r\/r (\d+-\d+-\d+):.*NTUSER.DAT*",
+            "random_inode" : r"d\/d (\d+-\d+-\d+):"
+        }
 
         self.system_logs_paths = {
             "Windows" :"d",
@@ -39,14 +45,21 @@ class ForensicExtractor:
         }
         self.yaml_config_path = "files_to_extract.yaml"  # Define the path to your YAML config file
         self.current_stderr = ""
-        self.patterns = {
-            # "partition": r"006:\s+\d+\s+(\d+)\s+\d+\s+\d+\s+Basic data partition",
-            "partition": r"^[0-9]{1,3}: {2}[^ ]+ +([0-9]{10}) {3}[0-9]{10} {3}[0-9]{10} {3}(NTFS.*|Basic data partition)$",
-            "random_inode": r"d\/d (\d+-\d+-\d+):"
-        }
+
+
+        
+        self.data_partition_offset = self._init_offset_partition_data()
+
+        
+    def _init_offset_partition_data(self):
+       output = self.run_command(f"mmls {self.disk_image_path}")
+       data_partition_offset = self._execute_re(self.patterns["partitionv1"], output)
+       assert data_partition_offset
+       return data_partition_offset
 
     @staticmethod
     def _execute_re(pattern, data):
+        print("log: ", pattern, data)
         match = re.search(pattern, data)
         if match == None:
             print(f"FAIL MATCH\n   [+] Data: {data}\n   [+] pattern: {pattern}")
@@ -58,11 +71,14 @@ class ForensicExtractor:
         output = self.run_command(f"fls -o {self.data_partition_offset} {self.disk_image_path}")
         for name in paths:
             pattern = self.get_pattern(name, paths[name])
-            inode = self.execute_re(pattern, output)
+            inode = self._execute_re(pattern, output)
             if paths[name] == "d":
                 output = self.run_command(f"fls -o {self.data_partition_offset} {self.disk_image_path} {inode}")
             else:
                 os.system(f"icat -o {self.data_partition_offset} {self.disk_image_path} {inode} > {self.output_directory}/{name}")
+
+    def get_pattern(self, name: str, is_directory="d"):
+        return r"d\/d (\d+-\d+-\d+):.*" + name + r"*" if is_directory=="d" else r"r\/r (\d+-\d+-\d+):.*"+name+"*"
 
 
     def extract_mft(self):
@@ -80,7 +96,7 @@ class ForensicExtractor:
 
     def run_command(self, command, stdout=subprocess.PIPE, text=True) -> str | bool | None:
         self.current_stderr = ""
-        result = subprocess.run(command, stdout=stdout, stderr=subprocess.PIPE, text=text)
+        result = subprocess.run(command, stdout=stdout, shell=True, stderr=subprocess.PIPE, text=text)
         if result.returncode != 0:
             self.logger.warning(f"Error executing command: {command}")
             self.logger.warning(result.stderr)
@@ -91,10 +107,6 @@ class ForensicExtractor:
         else:
             return result.returncode == 0
 
-    # def _init_offset_partition_data(self):
-    #    output = self.run_command(f"mmls {self.disk_image_path}".split(' '))
-    #    self.data_partition_offset = self._execute_re(self.patterns["partition"], output)
-    #    assert self.data_partition_offset
 
     # def _get_offset_partition_data(self):
     #    return self.data_partition_offset
@@ -109,37 +121,22 @@ class ForensicExtractor:
         else:
             return []
 
-    def get_user_hive(self):
-        output_path = f"{self.output_directory}/user_hive"
-        Path.mkdir(Path(output_path), exist_ok=True, parents=True)
-
-        data_partitions = self.get_data_partitions_offsets()
-        for i_part in range(len(data_partitions)):
-            offset = data_partitions[i_part]
-
-            ls_root = self.run_command(f"fls -o {offset} {self.disk_image_path}".split(' '))
-            users_inode = self._execute_re(self.patterns['users_inode']['pattern'], ls_root)
-            if users_inode is None:
-                self.logger.warning(f"Data partition at offset {offset} doesn't contain Users folder, skipping")
-                continue
-            ls_users = self.run_command(f"fls -o {offset} {self.disk_image_path} {users_inode}".split(" ")).split('\n')
-            i_user = 0
-            for user in ls_users:
-                if ("All Users" not in user) and ("Default User" not in user) and ("desktop.ini" not in user) and (
-                        "Public" not in user):
-                    user_inode = self._execute_re(self.patterns['random_inode'], user)
-                    if user_inode != None:
-                        print(user)
-                        user_name = re.findall(r"d\/d (\d+-\d+-\d+):\t(.*)$", user, flags=re.RegexFlag.M)[0][1]
-                        ls_user = self.run_command(f"fls -o {offset} {self.disk_image_path} {user_inode}".split(' '))
-
-                        nt_user_data_inode = self._execute_re(self.patterns["ntuser_data_inode"], ls_user)
-
-                        filename = f"ntuser_{user_name}_{i_part}.dat"
-                        os.system(
-                            f"icat -o {offset} {self.disk_image_path} {nt_user_data_inode}"
-                            f" > {output_path}/{filename}")
-                        i_user += 1
+    def extract_user_hive(self):
+        ls_root = self.run_command(f"fls -o {self.data_partition_offset} {self.disk_image_path}")
+        users_inode = self._execute_re(self.patterns['users_inode']['pattern'], ls_root)
+        ls_users = self.run_command(f"fls -o {self.data_partition_offset} {self.disk_image_path} {users_inode}").split("\n")
+        i=0
+        for user in ls_users:
+            if ("All Users" not in user) and ("Default User" not in user) and ("desktop.ini" not in user) and ("Public" not in user):
+                #print(user)
+                user_inode = self._execute_re(self.patterns['random_inode'], user)
+                if user_inode != None:
+                    #print(user_inode)
+                    ls_user = self.run_command(f"fls -o {self.data_partition_offset} {self.disk_image_path} {user_inode}")
+                    nt_user_data_inode = self._execute_re(self.patterns["ntuser_data_inode"], ls_user)
+                    print(f"icat -o {self.data_partition_offset} {self.disk_image_path} {nt_user_data_inode} > output/ntuser{str(i)}.dat")
+                    os.system(f"icat -o {self.data_partition_offset} {self.disk_image_path} {nt_user_data_inode} > output/ntuser{str(i)}.dat")
+                    i+=1
 
     def _extract_file(self, partition_number, file_path, output_fd=None):
         parts = self.list_partitions(fmt="dict")
@@ -313,6 +310,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--disk", "-d", action="store", required=True)
     parser.add_argument("--output-dir", "-O", action="store", required=False, default="artifacts")
+    parser.add_argument("--extract-user-hive", action="store_true")
+    parser.add_argument("--extract-system-hive", action="store_true")
+    parser.add_argument("--extract-browser-data", action="store_true")
+    parser.add_argument("--extract-system-logs", action="store_true")
+
     args = parser.parse_args()
     forensic_extractor = ForensicExtractor(os.path.abspath(args.disk), args.output_dir)
-    forensic_extractor.main()
+
+    if args.extract_system_hive:
+        forensic_extractor.extract_data(forensic_extractor.system_hive_paths)
+    if args.extract_system_logs:
+        forensic_extractor.extract_data(forensic_extractor.system_logs_paths)
+    if args.extract_user_hive:
+        forensic_extractor.extract_user_hive()
