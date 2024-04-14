@@ -18,27 +18,30 @@ class ForensicExtractor:
         self.output_directory = output_directory
         Path.mkdir(Path(self.output_directory), exist_ok=True, parents=True)
         self.data_partition_offset = ""
+
+        self.system_logs_paths = {
+            "Windows" :"d",
+            "System32": "d",
+            "winevt": "d",
+            "Logs": "d",
+            "Security.evtx": "r",
+            "System.evtx": "r"
+        }
+
+        self.system_hive_paths = {
+             "Windows" : "d",
+             "System32" : "d",
+             "config" : "d",
+             "SYSTEM": "r",
+             "SOFTWARE": "r",
+             "SECURITY": "r",
+             "SAM": "r"
+        }
         self.yaml_config_path = "files_to_extract.yaml"  # Define the path to your YAML config file
         self.current_stderr = ""
         self.patterns = {
             # "partition": r"006:\s+\d+\s+(\d+)\s+\d+\s+\d+\s+Basic data partition",
             "partition": r"^[0-9]{1,3}: {2}[^ ]+ +([0-9]{10}) {3}[0-9]{10} {3}[0-9]{10} {3}(NTFS.*|Basic data partition)$",
-            "windows_inode": r"d\/d (\d+-\d+-\d+):.*Windows*",
-            "windows_inode": {"inode": 0, "pattern": r"d\/d (\d+-\d+-\d+):.*Windows*"},
-            "system32_inode": r"d\/d (\d+-\d+-\d+):.*System32*",
-            "system32_inode": {"inode": 0, "pattern": r"d\/d (\d+-\d+-\d+):.*System32*"},
-            "config_inode": r"d\/d (\d+-\d+-\d+):.*config*",
-            "config_inode": {"inode": 0, "pattern": r"d\/d (\d+-\d+-\d+):.*config*"},
-            "system_inode": r"r\/r (\d+-\d+-\d+):.*SYSTEM\n",
-            "system_inode": {"inode": 0, "pattern": r"r\/r (\d+-\d+-\d+):.*SYSTEM\n"},
-            "security_inode": r"r\/r (\d+-\d+-\d+):.*SECURITY\n",
-            "security_inode": {"inode": 0, "pattern": r"r\/r (\d+-\d+-\d+):.*SECURITY\n"},
-            "software_inode": r"r\/r (\d+-\d+-\d+):.*SOFTWARE\n",
-            "software_inode": {"inode": 0, "pattern": r"r\/r (\d+-\d+-\d+):.*SOFTWARE\n"},
-            "sam_inode": r"r\/r (\d+-\d+-\d+):.*SAM\n",
-            "sam_inode": {"inode": 0, "pattern": r"r\/r (\d+-\d+-\d+):.*SAM\n"},
-            'users_inode': {"inode": 0, "pattern": r"d\/d (\d+-\d+-\d+):.*Users*"},
-            'ntuser_data_inode': r"r\/r (\d+-\d+-\d+):.*NTUSER.DAT*",
             "random_inode": r"d\/d (\d+-\d+-\d+):"
         }
 
@@ -49,6 +52,18 @@ class ForensicExtractor:
             print(f"FAIL MATCH\n   [+] Data: {data}\n   [+] pattern: {pattern}")
             return None
         return match.group(1)
+    
+
+    def extract_data(self, paths):
+        output = self.run_command(f"fls -o {self.data_partition_offset} {self.disk_image_path}")
+        for name in paths:
+            pattern = self.get_pattern(name, paths[name])
+            inode = self.execute_re(pattern, output)
+            if paths[name] == "d":
+                output = self.run_command(f"fls -o {self.data_partition_offset} {self.disk_image_path} {inode}")
+            else:
+                os.system(f"icat -o {self.data_partition_offset} {self.disk_image_path} {inode} > {self.output_directory}/{name}")
+
 
     def extract_mft(self):
 
@@ -125,38 +140,6 @@ class ForensicExtractor:
                             f"icat -o {offset} {self.disk_image_path} {nt_user_data_inode}"
                             f" > {output_path}/{filename}")
                         i_user += 1
-
-    def _extract_hive(self):
-
-        # set partition offset
-        output = self.run_command(f"mmls {self.disk_image_path}")
-        partition_offset = self._execute_re(self.patterns['partition']['pattern'], output)
-        self.patterns["partition"]["offset"] = partition_offset
-
-        # set all inode
-        output = self.run_command(f"fls -o {partition_offset} {self.disk_image_path}")
-        windows_inode = self._execute_re(self.patterns["windows_inode"]['pattern'], output)
-        output = self.run_command(f"fls -o {partition_offset} {self.disk_image_path} {windows_inode}")
-        system32_inode = self._execute_re(self.patterns["system32_inode"]["pattern"], output)
-        output = self.run_command(f"fls -o {partition_offset} {self.disk_image_path} {system32_inode}")
-        config_inode = self._execute_re(self.patterns["config_inode"]["pattern"], output)
-        output_config = self.run_command(f"fls -o {partition_offset} {self.disk_image_path} {config_inode}")
-        system_inode = self._execute_re(self.patterns["system_inode"]["pattern"], output_config)
-        security_inode = self._execute_re(self.patterns["security_inode"]["pattern"], output_config)
-        software_inode = self._execute_re(self.patterns["software_inode"]["pattern"], output_config)
-        sam_inode = self._execute_re(self.patterns["sam_inode"]["pattern"], output_config)
-
-        self.logger.info(
-            f"system inode: {system_inode}\nsecurity inode: {security_inode}\nsoftware_inode: {software_inode}\nsam inode: {sam_inode}")
-
-        self.logger.debug(partition_offset, self.disk_image_path)
-
-        os.system(f"icat -o {partition_offset} {self.disk_image_path} {system_inode} > {self.output_directory}/SYSTEM")
-        os.system(
-            f"icat -o {partition_offset} {self.disk_image_path} {security_inode} > {self.output_directory}/SECURITY")
-        os.system(
-            f"icat -o {partition_offset} {self.disk_image_path} {software_inode} > {self.output_directory}/SOFTWARE")
-        os.system(f"icat -o {partition_offset} {self.disk_image_path} {sam_inode} > {self.output_directory}/SAM")
 
     def _extract_file(self, partition_number, file_path, output_fd=None):
         parts = self.list_partitions(fmt="dict")
@@ -316,8 +299,14 @@ class ForensicExtractor:
         self.extract_forensic_data(files_to_extract)
         """
         # self._init_offset_partition_data()
-        self.get_user_hive()
         # self.extract_browser_info()
+
+        """
+        self.init_offset_partition_data()
+        self.extract_user_hive()
+        self.extract_data(self.system_hive_paths)
+        self.extract_data(self.system_logs_paths)
+        """
 
 
 if __name__ == "__main__":
