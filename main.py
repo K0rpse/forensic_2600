@@ -21,7 +21,7 @@ class ForensicExtractor:
         self.yaml_config_path = "files_to_extract.yaml"  # Define the path to your YAML config file
         self.current_stderr = ""
         self.patterns = {
-            #"partition": r"006:\s+\d+\s+(\d+)\s+\d+\s+\d+\s+Basic data partition",
+            # "partition": r"006:\s+\d+\s+(\d+)\s+\d+\s+\d+\s+Basic data partition",
             "partition": r"^[0-9]{1,3}: {2}[^ ]+ +([0-9]{10}) {3}[0-9]{10} {3}[0-9]{10} {3}(NTFS.*|Basic data partition)$",
             "windows_inode": r"d\/d (\d+-\d+-\d+):.*Windows*",
             "windows_inode": {"inode": 0, "pattern": r"d\/d (\d+-\d+-\d+):.*Windows*"},
@@ -50,6 +50,19 @@ class ForensicExtractor:
             return None
         return match.group(1)
 
+    def extract_mft(self):
+
+        # get ntfs partition offset
+        output = self.run_command(f"mmls {self.disk_image_path}")
+        mft_offset = self.execute_re(self.patterns['mft']['pattern'], output)
+        self.patterns["mft"]["offset"] = mft_offset
+
+        # set all inode
+        output = self.run_command(f"fls -o {mft_offset} {self.disk_image_path}")
+        mft_inode = self.execute_re(self.patterns["mft_inode"]['pattern'], output)
+
+        os.system(f"icat -o {mft_offset} {self.disk_image_path} {mft_inode} > output/MFT")
+
     def run_command(self, command, stdout=subprocess.PIPE, text=True) -> str | bool | None:
         self.current_stderr = ""
         result = subprocess.run(command, stdout=stdout, stderr=subprocess.PIPE, text=text)
@@ -63,12 +76,12 @@ class ForensicExtractor:
         else:
             return result.returncode == 0
 
-    #def _init_offset_partition_data(self):
+    # def _init_offset_partition_data(self):
     #    output = self.run_command(f"mmls {self.disk_image_path}".split(' '))
     #    self.data_partition_offset = self._execute_re(self.patterns["partition"], output)
     #    assert self.data_partition_offset
 
-    #def _get_offset_partition_data(self):
+    # def _get_offset_partition_data(self):
     #    return self.data_partition_offset
 
     def get_data_partitions_offsets(self) -> list:
@@ -80,7 +93,6 @@ class ForensicExtractor:
             return offsets
         else:
             return []
-
 
     def get_user_hive(self):
         output_path = f"{self.output_directory}/user_hive"
@@ -140,8 +152,10 @@ class ForensicExtractor:
         self.logger.debug(partition_offset, self.disk_image_path)
 
         os.system(f"icat -o {partition_offset} {self.disk_image_path} {system_inode} > {self.output_directory}/SYSTEM")
-        os.system(f"icat -o {partition_offset} {self.disk_image_path} {security_inode} > {self.output_directory}/SECURITY")
-        os.system(f"icat -o {partition_offset} {self.disk_image_path} {software_inode} > {self.output_directory}/SOFTWARE")
+        os.system(
+            f"icat -o {partition_offset} {self.disk_image_path} {security_inode} > {self.output_directory}/SECURITY")
+        os.system(
+            f"icat -o {partition_offset} {self.disk_image_path} {software_inode} > {self.output_directory}/SOFTWARE")
         os.system(f"icat -o {partition_offset} {self.disk_image_path} {sam_inode} > {self.output_directory}/SAM")
 
     def _extract_file(self, partition_number, file_path, output_fd=None):
@@ -194,7 +208,8 @@ class ForensicExtractor:
         interesting_artifacts = []
         for browser_k in browser_artifacts.keys():
             browser = browser_artifacts[browser_k]
-            self.logger.info(f"================================ {browser_k} ============================================")
+            self.logger.info(
+                f"================================ {browser_k} ============================================")
             for category_k in browser.keys():
                 category = browser[category_k]
                 if type(category) is not list:
@@ -218,14 +233,12 @@ class ForensicExtractor:
             with open(f"{output_path}/{output_name}", "wb") as file:
                 ret = self._extract_file(artifact["partition_id"], artifact["path"], output_fd=file)
             if ret:
-                self.logger.info(f"Successfully fetched file '{artifact['path']}' on partition {artifact['partition_id']}")
+                self.logger.info(
+                    f"Successfully fetched file '{artifact['path']}' on partition {artifact['partition_id']}")
             else:
                 self.logger.error(f"Failed to fetch file '{artifact['path']}' on partition {artifact['partition_id']}")
 
     def extract_security_log_info(self):
-        return 0
-
-    def extract_mft(self):
         return 0
 
     def list_partitions(self, fmt="string"):
@@ -302,9 +315,9 @@ class ForensicExtractor:
 
         self.extract_forensic_data(files_to_extract)
         """
-        #self._init_offset_partition_data()
+        # self._init_offset_partition_data()
         self.get_user_hive()
-        #self.extract_browser_info()
+        # self.extract_browser_info()
 
 
 if __name__ == "__main__":
