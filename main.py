@@ -3,7 +3,7 @@ import subprocess
 import yaml
 from pathlib import Path
 import re
-from termcolor import colored
+# from termcolor import colored
 
 
 class ForensicExtractor:
@@ -31,7 +31,10 @@ class ForensicExtractor:
             "sam_inode" : {"inode" : 0, "pattern": r"r\/r (\d+-\d+-\d+):.*SAM\n"},
             'users_inode' : {"inode": 0, "pattern":  r"d\/d (\d+-\d+-\d+):.*Users*"},
             'ntuser_data_inode' : r"r\/r (\d+-\d+-\d+):.*NTUSER.DAT*",
-            "random_inode" : r"d\/d (\d+-\d+-\d+):"
+            "random_inode" : r"d\/d (\d+-\d+-\d+):",
+            "mft": r"002:\s+\d+\s+(\d+)\s+\d+\s+\d+\s+NTFS / exFAT(0x07)",
+            "mft_inode": r"r\/r (\d+-\d+-\d+):.*$MFT*",
+            "mft_inode": {"inode" : 0, "pattern" :r"r\/r (\d+-\d+-\d+):.*$MFT*"}
         }
 
 
@@ -144,7 +147,18 @@ class ForensicExtractor:
         return 0
 
     def extract_mft(self):
-        return 0
+
+        #get ntfs partition offset
+        output = self.run_command(f"mmls {self.disk_image_path}")
+        mft_offset = self.execute_re(self.patterns['mft']['pattern'], output)
+        self.patterns["mft"]["offset"] = mft_offset
+
+        #set all inode
+        output = self.run_command(f"fls -o {mft_offset} {self.disk_image_path}")
+        mft_inode = self.execute_re(self.patterns["mft_inode"]['pattern'], output)
+
+        os.system(f"icat -o {mft_offset} {disk_image_path} {mft_inode} > output/MFT")
+
 
     def run_command(self, command, stdout=subprocess.PIPE, text=True) -> str | bool | None:
         self.current_stderr = ""
